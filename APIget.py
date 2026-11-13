@@ -12,7 +12,7 @@ params = {
     "key": KEY,
     "keywords": "银行",
     "types": "160100",        # 160100=银行  120300=住宅区
-    "city": "深圳",
+    "region": "深圳",
     "citylimit": "true",
     "page_size": 25,
     "page_num": 1,
