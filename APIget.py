@@ -1,8 +1,22 @@
 import os, csv, requests
 import time
+import sqlite3
+con = sqlite3.connect("banks.db")
+cursor = con.cursor()
 
 from dotenv import load_dotenv
 load_dotenv()#加载同目录下.env文件
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS banks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        address TEXT,
+        lng REAL,
+        lat REAL,
+        tel TEXT,
+        type TEXT
+    )
+''')
 
 KEY = os.getenv("AMAP_KEY"," ")
 URL = "https://restapi.amap.com/v5/place/text"
@@ -28,16 +42,18 @@ while True:
 
     if not pois:
         break
-    for p in r.get("pois", []):
+    for p in pois:
         lng, lat = (p.get("location") or ",").split(",")
-        rows.append({"name": p.get("name"), "address": p.get("address"),
-                    "lng": lng, "lat": lat, "tel": p.get("tel"), "type": p.get("type")})
+        rows.append((p.get("name"), p.get("address"),
+                    lng, lat,p.get("tel"), p.get("type")))
     print(f"已检索{page}页")
     page += 1
     time.sleep(1)
 
+rows = set(rows)
+rows = list(rows)#抓取顺序不重要，直接set去重
 if rows:
-    with open("banks.csv", "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=rows[0].keys())
-        w.writeheader(); w.writerows(rows)
-    print(f"已保存 {len(rows)} 条到 banks.csv")
+    cursor.executemany("INSERT INTO banks (name, address, lng, lat,tel,type) VALUES (?, ?, ?, ?, ?,?)", rows)
+    con.commit()
+    con.close()
+    print(f"已保存 {len(rows)} 条到 banks.db")
