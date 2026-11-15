@@ -5,7 +5,6 @@ import pandas as pd
 conn = sqlite3.connect("banks.db")
 df = pd.read_sql("SELECT * FROM banks", conn)
 conn.close()
-print(df)
 
 m = folium.Map(
     location=[22.54, 114.05],
@@ -20,4 +19,10 @@ for _,row in df.iterrows():
         popup=f"{row['name']}<br>{row['address']}",   # 点击标记后弹出的内容，支持 HTML
     ).add_to(m)
 
+my_head_html = '''
+    <link rel="stylesheet" href="libs/leaflet.css">
+    <script src="libs/leaflet.js"></script>
+               '''
+
+m.get_root().header.add_child(folium.Element(my_head_html))
 m.save("banks_map.html")
