@@ -1,1 +1,13 @@
+# 密钥：绝不提交
 .env
+
+# Python 运行时产物
+__pycache__/
+*.pyc
+
+# 虚拟环境与 IDE 配置
+.venv/
+.idea/
+
+# 抓取节流测试等本地临时文件
+*.log
