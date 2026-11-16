@@ -2,13 +2,12 @@
 """
 SQLOperation.py — 银行网点数据库访问层（DAL / Data Access Layer）
 
-职责边界（为什么要有这个文件）：
-  项目里所有碰 banks.db 的地方（抓取入库 APIget.py、静态地图 folium_map.py、
+职责边界：
+  项目里所有碰 banks.db 的地方（抓取入库 main.py、静态地图 folium_map.py、
   交互前端 bank_map_app.py）都只通过本模块访问数据库——
     1. SQL 收敛在一处，以后换 PostgreSQL 只改这个文件，其他脚本一行不动；
     2. 建表/迁移逻辑只有一份，三个脚本随便谁先跑，库结构都是对的；
     3. 唯一约束 + UPSERT 在这一层统一实现「增量更新与去重」，
-       谁来写数据都不可能把库写脏（这是赛题的 P0 硬性要求）。
 
 表结构（v2，相对 v1 新增三列，满足赛题「数据版本管理」要求）：
   banks(
@@ -40,8 +39,8 @@ import argparse
 import os
 import sqlite3
 from contextlib import closing
-from pathlib import Path
-from typing import Any
+from pathlib import Path#与字符串操作相比，路径路径更可靠
+from typing import Any#泛型标注
 
 # ---------------------------------------------------------------------------
 # 配置区
@@ -54,9 +53,6 @@ DB_PATH = Path(os.getenv("BANKS_DB", "") or Path(__file__).resolve().parent / "b
 SCHEMA_VERSION = 2
 
 # v2 建表语句模板。表名用参数填：常规建表用 "banks"，迁移期间用 "banks_v2"。
-# （表名是内部常量，不是用户输入，format 拼接无注入风险）
-# 唯一索引单独建：SQLite 不支持 ALTER TABLE ADD CONSTRAINT，
-# 也无法在 CREATE TABLE IF NOT EXISTS 里改旧表——版本迁移走「建新表→搬数据→改名」
 _CREATE_TABLE_SQL = """
 CREATE TABLE {} (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,12 +68,12 @@ CREATE TABLE {} (
 )
 """
 
+# 命中唯一索引(name,lng,lat)则更新可变字段并刷新 updated_at，
 _CREATE_UNIQUE_INDEX = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_banks_identity ON banks (name, lng, lat)"
 )
 
-# UPSERT：命中唯一索引(name,lng,lat)则更新可变字段并刷新 updated_at，
-# 未命中则插入。「新数据插得进、旧数据更新得动、重复数据进不来」——增量更新的地基
+# 未命中则插入。
 _UPSERT_SQL = """
 INSERT INTO banks (name, address, lng, lat, tel, type, source)
 VALUES (:name, :address, :lng, :lat, :tel, :type, :source)
@@ -97,8 +93,8 @@ ON CONFLICT (name, lng, lat) DO UPDATE SET
 def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     """打开数据库连接并确保表结构为最新版本。
 
-    每次连接都跑一遍 ensure_schema（幂等）：任何一个脚本先启动，
-    都能保证拿到的库结构是对的，不需要「先手工跑某个初始化脚本」这种顺序约定。
+    可改进：
+        1.与create_database存在重复代码，可优化。
 
     Args:
         db_path: 数据库文件路径；缺省用模块级 DB_PATH（可被 BANKS_DB 环境变量覆盖）。
@@ -111,29 +107,29 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     """
     path = Path(db_path) if db_path else DB_PATH
     if not path.exists():
+        # 防止SQLite默认创建新库
         raise FileNotFoundError(
-            f"未找到数据库文件：{path}。请先运行 APIget.py 抓取数据，"
+            f"未找到数据库文件：{path}。请先运行 main.py 抓取数据，"
             f"或用环境变量 BANKS_DB 指定已有数据库的位置。"
         )
     conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row  # 按列名取值，避免魔法下标 row[3]
-    conn.execute("PRAGMA foreign_keys = ON")
-    ensure_schema(conn, allow_create=True)
+    conn.row_factory = sqlite3.Row  # 按列名取值，
+    conn.execute("PRAGMA foreign_keys = ON")# 启用SQLite外键约束
+    ensure_schema(conn, allow_create=True)# 结构检查
     return conn
 
 
 def create_database(db_path: Path | str | None = None) -> sqlite3.Connection:
     """创建全新数据库（抓取脚本第一次运行时用）。
 
-    与 get_connection 的区别：本函数允许库文件不存在并主动创建，
-    get_connection 则对缺失文件 fail fast——查询方拿到明确报错，
-    而不是被 sqlite 静默新建的空库误导。
+    可改进：
+        1.未设PRAGMA foreign_keys = ON，不利于关联表拓展。
 
     Returns:
         sqlite3.Connection，已建好 v2 表结构，调用方负责 close。
     """
     path = Path(db_path) if db_path else DB_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)# 确保父目录存在
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     ensure_schema(conn, allow_create=True)
@@ -169,7 +165,7 @@ def ensure_schema(conn: sqlite3.Connection, allow_create: bool = False) -> None:
     ).fetchone()
     if not has_table:
         if not allow_create:
-            raise RuntimeError("banks 表不存在：请先运行 APIget.py 抓取数据")
+            raise RuntimeError("banks 表不存在：请先运行 main.py 抓取数据")
         _create_v2(conn)
         return
 
@@ -178,7 +174,12 @@ def ensure_schema(conn: sqlite3.Connection, allow_create: bool = False) -> None:
 
 
 def _create_v2(conn: sqlite3.Connection) -> None:
-    """建 v2 表并打版本号。"""
+    """
+    建 v2 表并打版本号。
+
+    可改进：
+        1._CREATE_UNIQUE_INDEX用参数化表名，无索引，不利于V3拓展。
+    """
     with conn:
         conn.execute(_CREATE_TABLE_SQL.format("banks"))
         conn.execute(_CREATE_UNIQUE_INDEX)
@@ -188,13 +189,12 @@ def _create_v2(conn: sqlite3.Connection) -> None:
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     """把 v1 旧表（无 source/created_at/updated_at）迁移到 v2。
 
+    可改进：
+        1.目前是把旧数据存入内存，不利于大型数据处理。
+        2.迁移前未假设v1数据脏（建议先去重）
+
     标准路径：建新表 → 在 Python 侧逐行清洗后搬数据 → 删旧表 → 改名。
     id 原样保留，前端 tooltip 里的 "#id" 定位不受影响。
-    搬数据在 Python 侧逐行做（而非纯 SQL）：tel 的列表皮归一化
-    在 SQL 里表达不了，历史数据也要过一遍 clean_row 同样的纪律。
-
-    为什么不用 ALTER TABLE ADD COLUMN：加列可以，但加唯一索引不行，
-    而去重约束（鉴定报告 B1，最致命一条）必须落在数据库层。
 
     Raises:
         RuntimeError: 旧表结构不符合预期，迁移拒绝执行（保护数据优先）。
@@ -242,6 +242,9 @@ def normalize_tel(tel: Any) -> str:
     高德 v5 的 tel 可能返回列表（一家银行登记多部电话），
     直接入库会存成 "['0755-8888']" 这种带 Python 列表皮的字符串。
 
+    可改进：
+        1.若V1数据已存成字符串无法解包。
+
     Args:
         tel: 原始 tel 字段（str / list / None 均可）。
 
@@ -257,10 +260,13 @@ def clean_row(name: Any, address: Any, lng: Any, lat: Any, tel: Any, type_: Any,
               source: str = "amap_v5") -> dict[str, Any] | None:
     """把一条高德 POI 原始记录清洗成可入库的 dict。
 
-    所有「缺失值 / 格式不一致」的处理集中在这一个函数（赛题「数据清洗」要求）：
+    所有「缺失值 / 格式不一致」的处理集中在这一个函数：
       - 坐标缺失或无法转 float → 返回 None，调用方跳过并记日志；
       - tel 列表 → 归一化字符串；
       - name 缺失 → 整行无意义，返回 None。
+
+    可改进：
+        1.ing=0、lat=0合法。
 
     Returns:
         可直接传给 upsert_banks 的 dict；不可用记录返回 None。
@@ -295,7 +301,10 @@ def upsert_banks(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> tuple[
     """批量 UPSERT 银行记录，返回 (新增条数, 更新条数)。
 
     依赖唯一索引 (name, lng, lat)：重复运行抓取脚本不会堆积数据
-    （鉴定报告 B1/B2 的修复）；已存在的记录刷新地址/电话/类型与 updated_at。
+
+    可改进点：
+        1.一次UPDATE即使没有值被修改也被计数。
+        2.即使是空rows仍开连接并2次count。
 
     Args:
         conn: 数据库连接（函数内部不开事务，由调用方决定提交时机）。
@@ -323,7 +332,6 @@ def _escape_like(keyword: str) -> str:
     """转义 LIKE 通配符（% _ \\），配合 ESCAPE 子句使用。
 
     用户输入的 % 会被当成通配符，虽然无害但行为不符合直觉；
-    转义后"按字面匹配"，行为可预期。
     """
     return keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -332,7 +340,7 @@ def load_banks(conn: sqlite3.Connection, keyword: str = "",
                bank_type: str = "全部") -> list[sqlite3.Row]:
     """读取银行列表，支持名称关键词模糊匹配与类型精确过滤。
 
-    值一律用 ? 占位符传入，绝不用 f-string 拼 SQL —— SQL 注入防线。
+    值一律用 ? 占位符传入。
     """
     sql = ("SELECT id, name, address, lng, lat, tel, type, "
            "source, created_at, updated_at FROM banks WHERE 1=1")

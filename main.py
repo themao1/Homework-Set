@@ -1,27 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-APIget.py — 高德银行 POI 抓取脚本（增量更新版）
+main.py — 高德银行 POI 抓取脚本
 
 数据管道第 1 环：抓取 → 清洗 → 入库（banks.db）
-  - 抓取：高德开放平台 Web 服务 API v5（合规数据源，遵守开放平台配额与条款）
+  - 抓取：高德开放平台 Web 服务 API v5
   - 清洗：clean_row 统一收口（SQLOperation.py）
-  - 入库：UPSERT 依赖唯一索引，重复运行不堆积数据（增量更新与去重）
+  - 入库：UPSERT 依赖唯一索引，重复运行不堆积数据
 
 运行方式（本文件所在目录）：
-    python APIget.py            # 全量分页抓取深圳银行并增量入库
-    python APIget.py --pages 2  # 只抓前 2 页（调试用，省配额）
+    python main.py            # 全量分页抓取深圳银行并增量入库
+    python main.py --pages 2  # 只抓前 2 页（调试用，省配额）
 
 依赖：requirements.txt（requests / python-dotenv / SQLOperation.py 本地模块）
-配置：同目录 .env 写入 AMAP_KEY=<你的高德 Key>（.env 已被 .gitignore 排除，不会提交）
+配置：同目录 .env 写入 AMAP_KEY=<你的高德 Key>
 """
 
-from __future__ import annotations
+from __future__ import annotations#可以不使用（开发版本python3.14）
 
-import argparse
+import argparse#CLI构建模块
 import logging
 import os
 import time
-from contextlib import closing
+from contextlib import closing#close资源兜底
 
 import requests
 from dotenv import load_dotenv
@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 配置区：所有「可能变的东西」集中一处
 # ---------------------------------------------------------------------------
+#可改进：keywords、region、types可做成CLI参数或环境变量。
 
 URL = "https://restapi.amap.com/v5/place/text"
 
@@ -56,7 +57,7 @@ DEFAULT_PARAMS: dict[str, str | int] = {
     "output": "JSON",
 }
 
-# 每页请求间隔（秒）：请求节流，别把别人的服务器打挂——合规红线之一
+# 每页请求间隔（秒）：请求节流，
 REQUEST_INTERVAL_SEC = 1.0
 
 # 响应体 status != "1" 时最多重试次数（网络抖动兜底）
@@ -65,11 +66,6 @@ MAX_RETRIES = 3
 
 def load_api_key() -> str:
     """读取高德 API Key，缺失时当场报错退出（fail fast）。
-
-    为什么不用 os.getenv("AMAP_KEY", " ") 这种默认值兜底：
-    空格 Key 会把错误延迟到运行中段、以高德的 INVALID_USER_KEY 报出来，
-    排查的人会去查 Key 本身，而真正的原因是 .env 没配。
-    启动时的配置错误就该在启动时爆，报自己的错。
 
     Returns:
         有效的 AMAP_KEY 字符串。
@@ -87,10 +83,10 @@ def load_api_key() -> str:
 def fetch_page(session: requests.Session, key: str, page_num: int) -> list[dict]:
     """抓取高德 POI 接口的第 page_num 页，返回本页原始 POI 列表。
 
-    错误处理两层数（A3）：
-      1. HTTP 层：raise_for_status()，非 2xx 当场抛；
-      2. 业务层：高德 v5 约定 status == "1" 才算成功，
-         否则带官方 infocode 抛错——「接口挂了」和「真的没数据」必须可区分。
+    可调整事项：
+        1.线性退避可改成指数退避。
+        2.将可重试错误与永久性错误区分开。
+        3.没有JSONDecodeError接口。
 
     Args:
         session: 复用的 requests 会话（连接复用，对目标服务更友好）。
@@ -110,7 +106,7 @@ def fetch_page(session: requests.Session, key: str, page_num: int) -> list[dict]
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = session.get(URL, params=params, timeout=10)
-            resp.raise_for_status()  # 先管 HTTP 层
+            resp.raise_for_status()  #捕获HTTP层异常
             payload = resp.json()
             if payload.get("status") != "1":
                 raise RuntimeError(
@@ -130,6 +126,9 @@ def fetch_page(session: requests.Session, key: str, page_num: int) -> list[dict]
 
 def fetch_all(session: requests.Session, key: str, max_pages: int | None = None) -> list[dict]:
     """分页抓取全部银行 POI，返回原始记录列表。
+
+    可调整事项：
+        1.可改为边抓边写以避免在产品检索范围扩张时爆内存。
 
     Args:
         max_pages: 最多抓多少页；None 表示抓到没有数据为止。调试时限制页数可省配额。
@@ -154,8 +153,10 @@ def fetch_all(session: requests.Session, key: str, max_pages: int | None = None)
 def save_banks(pois: list[dict]) -> tuple[int, int]:
     """清洗一批原始 POI 并增量入库，返回 (新增, 更新)。
 
-    串联说明：数据库操作全部委托给 SQLOperation（数据访问层），
-    本文件不再直接碰 sqlite3 —— 换数据库只改 SQLOperation 一个文件。
+    可改进处：
+        1.rows为空可提前返回。
+
+    数据库操作全部委托给 SQLOperation，
 
     Returns:
         (inserted, updated) 元组。
@@ -164,14 +165,13 @@ def save_banks(pois: list[dict]) -> tuple[int, int]:
     skipped = 0
     for p in pois:
         location = p.get("location") or ""
-        # A4 修复：location 缺失/不含逗号时整行跳过并记日志，
         # 不能让空字符串以 TEXT 形式混进 REAL 列（SQLite 动态类型不会报错）
         if "," not in location:
             logger.warning("跳过无坐标记录：%s", p.get("name"))
             skipped += 1
             continue
         lng, lat = location.split(",", 1)
-        # B4 清洗收口：坐标转 float、tel 归一化、空值处理全在 clean_row 里
+        #清洗收口：坐标转 float、tel 归一化、空值处理全在 clean_row 里
         cleaned = clean_row(
             p.get("name"), p.get("address"), lng, lat, p.get("tel"), p.get("type")
         )

@@ -2,11 +2,9 @@
 """
 bank_map_app.py — 银行网点地图查询前端（Streamlit + st_folium 教案式单文件版）
 
-衔接已完成部分：
-  - 数据来源：APIget.py 抓取并写入的 banks.db（表 banks: id/name/address/lng/lat/tel/type）
+  - 数据来源：main.py 抓取并写入的 banks.db（表 banks: id/name/address/lng/lat/tel/type）
   - 坐标系：数据来自高德 API，是 GCJ-02 坐标（火星坐标系）。
     底图因此必须继续用高德瓦片 —— 底图坐标系和数据坐标系必须一致，
-    否则所有点位会整体偏移几百米。这是地图开发最常见的坑之一。
 
 运行方式（在本文件所在目录执行，banks.db 需在同一目录）：
     pip install -r requirements.txt
@@ -14,8 +12,8 @@ bank_map_app.py — 银行网点地图查询前端（Streamlit + st_folium 教�
 
 交互设计（st_folium 的核心机制）：
   st_folium 不是"一次性渲染"，而是每次地图交互（点击/缩放）都会返回一个 dict，
-  并触发 Streamlit 整页 rerun。我们要做的，就是从返回 dict 里"读出"用户点了哪里，
-  再拿着坐标/ID 回数据库查询 —— 这就是「前端交互 → 数据库联动」的闭环。
+  并触发 Streamlit 整页 rerun。从返回 dict 里"读出"用户点了哪里，
+  再拿着坐标/ID 回数据库查询
 """
 
 from __future__ import annotations
@@ -33,11 +31,10 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 # ---------------------------------------------------------------------------
-# 配置区：所有"可能变的东西"集中放在一起，不要散落在代码各处
+# 配置区：
 # ---------------------------------------------------------------------------
 
 # 默认读同目录的 banks.db，也允许用环境变量 BANKS_DB 覆盖路径（便于测试/部署）
-# 环境变量优先于写死的默认值 —— 配置永远不该被编译进代码
 DB_PATH = Path(os.getenv("BANKS_DB", "") or Path(__file__).resolve().parent / "banks.db")
 
 # 地图初始视野（深圳市民中心附近）
@@ -52,17 +49,19 @@ AMAP_TILE = (
 
 
 # ---------------------------------------------------------------------------
-# 数据访问层（Repository 思维的雏形）
-#
-# 为什么把 SQL 都收敛到这几个函数里？
-#   1. UI 代码不直接碰 sqlite3 —— 以后换 PostgreSQL 只改这里，页面一行不动；
-#   2. 函数有明确的输入/输出类型，能单独测试；
-#   3. 连接的打开/关闭只发生在一个地方，不会漏。
+'''数据访问层
+需要改进：
+1.
+越过SQLOperation操作数据库。
+'''
 # ---------------------------------------------------------------------------
 
 
 def _connect() -> sqlite3.Connection:
     """打开数据库连接，并启用"行 → dict"的行工厂。
+
+    可改进：
+        1.能运行是因为调用的列V1也有。
 
     Returns:
         sqlite3.Connection
@@ -75,7 +74,7 @@ def _connect() -> sqlite3.Connection:
     if not DB_PATH.exists():
         raise FileNotFoundError(
             f"未找到数据库文件：{DB_PATH}。"
-            f"请先运行 APIget.py 抓取数据，或把 banks.db 放到本文件同目录。"
+            f"请先运行 main.py 抓取数据，或把 banks.db 放到本文件同目录。"
         )
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # 查询结果可按列名取值，避免魔法下标 row[3]
@@ -87,6 +86,9 @@ def load_banks(
 ) -> pd.DataFrame:
     """读取银行列表，支持按名称关键词、类型筛选。
 
+    可改进：
+        1.没有像SQLOperation.load_banks那样将输入转义。
+
     Args:
         keyword: 名称关键词，模糊匹配（LIKE），空串表示不过滤。
         bank_type: 网点类型；"全部" 表示不过滤。
@@ -97,7 +99,6 @@ def load_banks(
     sql = "SELECT id, name, address, lng, lat, tel, type FROM banks WHERE 1=1"
     params: list[Any] = []
 
-    # 注意：值用 ? 占位符传入，绝不用 f-string 拼 SQL —— 这是 SQL 注入防线
     if keyword:
         sql += " AND name LIKE ?"
         params.append(f"%{keyword}%")
@@ -105,7 +106,7 @@ def load_banks(
         sql += " AND type = ?"
         params.append(bank_type)
 
-    # 只读操作也用 try/finally 确保连接归还，资源管理是纪律不是风格
+    # 只读操作用 try/finally
     conn = _connect()
     try:
         df = pd.read_sql(sql, conn, params=params)
@@ -137,7 +138,10 @@ def nearby_banks(
 ) -> pd.DataFrame:
     """查询某坐标点周边 radius_m 米内的银行，按距离升序返回。
 
-    两步走的性能思路（数据量大时是必须的，先背下来）：
+    可改进：
+        1.d_lng爆炸问题（如若全球或大范围应用）
+
+    两步走的性能思路：
       1. bounding box 粗筛：经纬度矩形范围过滤掉 99% 的无关点，纯数值比较极快；
       2. Haversine 精算：只对粗筛幸存者算球面距离，然后按真实距离排序/截断。
     如果数据库换成 PostgreSQL + PostGIS，这一步可以下推为
@@ -191,6 +195,10 @@ def build_map(
 ) -> folium.Map:
     """把 DataFrame 渲染成 folium 地图。
 
+    可改进：
+        1.pd.isna挡不住空字符串。
+        2.外部数据拼HTML未实际转义。
+
     关键机制：st_folium 点了哪个标记，返回值里就带哪个标记的
     tooltip/popup 文本。所以我们在 tooltip 里编入 id（"#12 网点名"），
     前端就能可靠地知道"用户点的是数据库里 id=12 的那条记录"。
@@ -201,13 +209,12 @@ def build_map(
         location=center or MAP_CENTER,
         zoom_start=zoom or MAP_ZOOM,
         tiles=AMAP_TILE,
-        attr="高德地图",  # 底图版权声明，法律上是必须的
+        attr="高德地图",  # 底图版权声明。
     )
 
     # iterrows 慢，但几百上千个点完全无感；数据量上 10 万再考虑 CircleMarker 批量方案
     for _, row in df.iterrows():
-        # 数据是不可信的：API 抓回来的行可能缺 lat/lng（你的抓取脚本就有这个隐患），
-        # 用 pd.isna 判断而不是 if row["lat"]，空字符串/None 都能挡住
+        # 数据是不可信的：API 抓回来的行可能缺 lat/lng，
         if pd.isna(row["lat"]) or pd.isna(row["lng"]):
             continue
         folium.Marker(
@@ -245,7 +252,6 @@ st.caption("数据来源：高德地图 API → banks.db ｜ 点击标记查看�
 with st.sidebar:
     st.header("筛选")
     keyword = st.text_input("网点名称关键词", placeholder="如：建设银行")
-    # 类型列表从数据里来，而不是写死 —— 数据变了选项自动跟上
     try:
         all_banks = load_banks()
     except FileNotFoundError as exc:
@@ -261,18 +267,17 @@ with st.sidebar:
 banks = load_banks(keyword, bank_type)
 
 if banks.empty:
-    st.warning("没有符合条件的网点，请调整筛选条件，或先运行 APIget.py 抓取数据。")
+    st.warning("没有符合条件的网点，请调整筛选条件，或先运行 main.py 抓取数据。")
     st.stop()
 
+
+#可改进：若拓展后数据量大要考虑st.cache_date缓存
 c1, c2, c3 = st.columns(3)
 c1.metric("当前筛选结果", f"{len(banks)} 家")
 c2.metric("库内总网点数", f"{len(all_banks)} 家")
 c3.metric("类型数", f"{banks['type'].nunique()} 种")
 
 # ---- 地图 + 交互回传 ----
-# st_folium 的经典坑：Streamlit 每次交互整页重跑，地图会重置回初始视野。
-# 解法：把上次回传的 center/zoom 存进 session_state，重建地图时回填 ——
-# "页面的状态要自己管"，这是几乎所有前端框架的通识。
 if "map_view" not in st.session_state:
     st.session_state.map_view = {}
 view = st.session_state.map_view
@@ -336,5 +341,5 @@ if last_click:
 st.divider()
 st.caption(
     "提示：地图数据为 GCJ-02 坐标系（高德），与高德底图自洽；"
-    "如更换 OpenStreetMap 等 WGS84 底图，点位会整体偏移约数百米。"
+    "如更换 OpenStreetMap 等 WGS84 底图，点位会整体偏移。"
 )
