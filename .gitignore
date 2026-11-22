@@ -12,6 +12,10 @@ __pycache__/
 # 抓取节流测试等本地临时文件
 *.log
 
+# 系统 / 编辑器杂项
+Thumbs.db
+.DS_Store
+
 # Leaflet 本地资源：只入库运行时需要的 leaflet.js / leaflet.css / images/，
 # 源码版、sourcemap、压缩包属于开发件，不入库（见 map_assets.py）
 libs/*.map
