@@ -135,10 +135,31 @@ def map_center(rows: list[dict[str, Any]]) -> tuple[float, float]:
     return (lat, lng)
 
 
+def as_center(value: Any) -> list[float] | None:
+    """把 st_folium 回传的 center 统一成 folium 认识的 [lat, lng]。
+
+    st_folium 回传的是 ``{"lat": 22.5, "lng": 114.0}`` 这样的字典，
+    而 folium 要的是 ``[lat, lng]`` 序列。直接 ``list(字典)`` 拿到的是键名
+    ``['lat', 'lng']``，folium 会抛
+    「Location should consist of two numerical values」，
+    于是页面在地图交互后的下一次重跑里整块变成报错框——这是「点一下就没了」的元凶。
+    """
+    if isinstance(value, dict):
+        lat, lng = value.get("lat"), value.get("lng")
+    elif isinstance(value, (list, tuple)) and len(value) == 2:
+        lat, lng = value[0], value[1]
+    else:
+        return None
+    try:
+        return [float(lat), float(lng)]
+    except (TypeError, ValueError):
+        return None
+
+
 def build_map(
     rows: list[dict[str, Any]],
     layer: config.Layer,
-    center: list[float] | None = None,
+    center: Any = None,
     zoom: int | None = None,
     selected_id: int | None = None,
 ) -> folium.Map:
@@ -156,7 +177,7 @@ def build_map(
     """
     lat, lng = map_center(rows)
     m = folium.Map(
-        location=list(center or (lat, lng)),
+        location=as_center(center) or [lat, lng],
         zoom_start=zoom or config.MAP_ZOOM,
         tiles=config.AMAP_TILE,
         attr="高德地图",  # 底图版权声明，法律上必须保留
@@ -173,16 +194,16 @@ def build_map(
             continue
 
         # 外部数据（高德返回的名称/地址）拼 HTML 前必须转义，防 XSS
-        popup_html = (
-            f"<b>{html.escape(fmt_value(row.get('name'), ''))}</b><br>"
-            f"{html.escape(fmt_value(row.get('address'), ''))}<br>"
-            f"{html.escape(fmt_value(row.get('tel'), ''))}<br>"
-            f"<span style='color:#888'>{html.escape(short_type(row.get('type')))}</span>"
-        )
+        # 用 tooltip 而不是 Popup：folium 的 Popup 依赖 jQuery，离线时会抛错中断整个地图脚本
         folium.Marker(
             location=[row["lat"], row["lng"]],
-            tooltip=f"#{row['id']} {fmt_value(row.get('name'), '')}",
-            popup=folium.Popup(popup_html, max_width=260),
+            tooltip=map_assets.tooltip_html(
+                row["id"],
+                html.escape(fmt_value(row.get("name"), "")),
+                html.escape(fmt_value(row.get("address"), "")),
+                html.escape(fmt_value(row.get("tel"), "")),
+                html.escape(short_type(row.get("type"))),
+            ),
             # 内联 SVG 图钉：不依赖 awesome-markers / glyphicons 等外部图标库
             icon=map_assets.pin_icon(layer.key, selected=row["id"] == selected_id),
         ).add_to(m)
@@ -190,10 +211,15 @@ def build_map(
 
 
 def parse_poi_id(tooltip: Any) -> int | None:
-    """从 st_folium 回传的 tooltip 文本里解析记录 id（"#12 建设银行" → 12）。"""
+    """从 st_folium 回传的 tooltip 文本里解析记录 id（"#12 建设银行" → 12）。
+
+    真实返回的 tooltip 往往被 folium 包了一层容器，形如
+    ``<div style='max-width:250px'>…<b>#12 某某银行</b>…</div>``，
+    所以这里用 search 而不是 match：只要文本里出现 ``#数字`` 就认。
+    """
     if not isinstance(tooltip, str):
         return None
-    match = re.match(r"#(\d+)", tooltip)
+    match = re.search(r"#(\d+)", tooltip)
     return int(match.group(1)) if match else None
 
 
@@ -443,22 +469,34 @@ def render_map_tab(filters: dict[str, Any]) -> None:
     )
 
     # returned_objects：只声明关心的回传字段，减小每次 rerun 的 payload
+    # 注意必须带上 last_object_clicked_tooltip —— 标记点的 id 编码在 tooltip 里，
+    # 少了它就只能拿到坐标，没法知道用户点的是哪条记录
     map_data = st_folium(
         map_obj,
         key=f"map_{layer.key}",
         height=520,
-        returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
+        returned_objects=[
+            "last_clicked",
+            "last_object_clicked",
+            "last_object_clicked_tooltip",
+            "center",
+            "zoom",
+        ],
     )
 
     if map_data:
+        # 存之前就归一化：后续重跑直接用，别再传回字典（见 as_center 的说明）
         st.session_state[view_key] = {
-            "center": map_data.get("center"),
+            "center": as_center(map_data.get("center")),
             "zoom": map_data.get("zoom"),
         }
 
+    # 点击标记：st_folium 把坐标放在 last_object_clicked，
+    # 把标记上的文本放在 last_object_clicked_tooltip（我们靠其中的 "#id" 反查记录）
     marker_clicked = (map_data or {}).get("last_object_clicked")
-    if marker_clicked:
-        poi_id = parse_poi_id(marker_clicked.get("tooltip"))
+    clicked_tooltip = (map_data or {}).get("last_object_clicked_tooltip")
+    if marker_clicked and clicked_tooltip:
+        poi_id = parse_poi_id(clicked_tooltip)
         if poi_id is not None:
             st.session_state[select_key] = poi_id
 

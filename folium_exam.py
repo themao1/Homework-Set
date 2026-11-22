@@ -45,7 +45,9 @@ def main() -> int:
             continue
         folium.Marker(
             location=[float(lat), float(lng)],
-            popup=row.get("name") or "",
+            tooltip=map_assets.tooltip_html(
+                row.get("id"), row.get("name") or "", row.get("address") or ""
+            ),
             icon=map_assets.pin_icon("bank"),
         ).add_to(m)
 

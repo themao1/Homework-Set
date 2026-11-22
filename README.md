@@ -101,11 +101,17 @@ folium 默认从公网 CDN 加载 10 个资源。实测只要其中两个挂了�
 同时去掉了 jquery / bootstrap / glyphicons / fontawesome / awesome-markers 这 8 个用不到的
 CDN 依赖，标记点改为**内联 SVG 图钉**（`folium.DivIcon`），不依赖任何图标字体。
 
+> ⚠️ 一个踩过的坑：`folium.Popup` 的模板里用 jQuery 的 `$(...)` 把 HTML 转成 DOM 节点，
+> 一旦页面没有 jQuery（离线/CDN 不通）就会抛 `ReferenceError: $ is not defined`，
+> **整段地图脚本直接中断**，表现就是「地图只出来一个点 / 完全不加载」。
+> 所以本项目的标记点改用 Leaflet 原生 **tooltip**（模板字符串，零依赖）：
+> 鼠标悬停显示名称、地址、电话、类型，点击标记则由下方详情卡片展示完整信息。
+
 - 导出到其它目录时，`folium_map.export` 会自动把 `libs/` 复制到 HTML 旁边；
 - 本地资源缺失时自动回退到 folium 默认 CDN，并打印一次警告；
 - 应急开关：环境变量 `MAP_ASSET_MODE=cdn` 可强制走原来的 CDN 方式。
 
-自查：导出的 HTML 里搜不到 `http` 外链、搜不到 `AwesomeMarkers`。
+自查：导出的 HTML 里搜不到 `http` 外链、搜不到 `AwesomeMarkers`、搜不到 `$(`。
 
 > 注意：底图瓦片仍然来自高德服务器。完全断网时能正常看到标记点、控件和交互，
 > 但底图会是灰底——瓦片要离线只能自己搭缓存或改用本地瓦片目录。
@@ -211,6 +217,9 @@ grep -rn "import sqlite3" *.py  # Git Bash / Linux
 | `clean_row` 认为 `lng=0/lat=0` 合法 | 保留这个判断，另加经纬度**合法范围**校验 |
 | 抓取边抓边写可以省内存 | 当前仍是分批入内存后入库，注释标明了改造点 |
 | folium 样式/脚本从公网 CDN 获取，离线打不开地图 | 改用本地 `libs/` + 内联 SVG 图钉，去掉 8 个用不到的 CDN 请求（见 3.5） |
+| （实测新发现）`folium.Popup` 内部依赖 jQuery，删掉 jQuery 后脚本报 `$ is not defined` 中断 | 标记点改用 Leaflet 原生 tooltip，彻底不依赖 jQuery |
+| （实测新发现）`st_folium` 回传的 `center` 是 `{"lat","lng"}` 字典，直接喂给 `folium.Map` 会报 TypeError | 新增 `as_center()` 归一化，存进 session_state 前就转成 `[lat, lng]` |
+| （实测新发现）标记点 id 不存在 `last_object_clicked.tooltip` 里，取错了回传字段 | 回传字段补上 `last_object_clicked_tooltip`，点击标记才能打开详情 |
 
 ---
 

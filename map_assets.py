@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import base64
 import functools
+import json
 import logging
+import mimetypes
+import re
 import shutil
 from pathlib import Path
 
@@ -86,20 +89,96 @@ def local_assets_available() -> bool:
     return config.LEAFLET_JS.is_file() and config.LEAFLET_CSS.is_file()
 
 
+def tooltip_html(
+    poi_id: int | str,
+    name: str,
+    address: str = "",
+    tel: str = "",
+    type_text: str = "",
+) -> str:
+    """构造标记点的悬浮卡片内容（纯 HTML 字符串）。
+
+    为什么不用 folium.Popup？—— folium 的 Popup 模板里会用 jQuery 的 ``$(...)``
+    把 HTML 转成 DOM 节点，一旦页面没有 jQuery（离线/CDN 不通）就会抛
+    ``ReferenceError: $ is not defined``，整段地图脚本中断，后面所有标记点都不再创建。
+    Leaflet 的 tooltip 走的是模板字符串，没有任何第三方依赖，离线也能正常显示。
+
+    内容以 ``#id`` 开头，前端靠它反查记录（见 bank_map_app.parse_poi_id）。
+    """
+    return (
+        "<div style='width:max-content;max-width:250px;white-space:normal;"
+        "line-height:1.35;text-align:left'>"
+        f"<b>#{poi_id} {name}</b>"
+        f"{'<br>' + address if address else ''}"
+        f"{'<br>' + tel if tel else ''}"
+        f"{'<br><span style=\"color:#888\">' + type_text + '</span>' if type_text else ''}"
+        "</div>"
+    )
+
+
 @functools.lru_cache(maxsize=1)
 def _inline_urls() -> tuple[str, str]:
     """把本地 leaflet.js / leaflet.css 编码成 data: URL（只编码一次，结果缓存）。
 
     Streamlit 组件运行在独立 iframe 里，用相对路径拿不到项目文件，
     所以把资源内容直接塞进 URL，做到「零网络请求」。
+
+    CSS 里 ``url(images/xxx.png)`` 这类相对引用在 data: URL 下没有基准路径，
+    会被解析成组件目录下的地址（404），所以这里把图片也一并内联成 data: URL。
     """
     js = "data:text/javascript;base64," + base64.b64encode(
         config.LEAFLET_JS.read_bytes()
     ).decode("ascii")
+    css_text = _css_with_inline_images(config.LEAFLET_CSS.read_text(encoding="utf-8"))
     css = "data:text/css;base64," + base64.b64encode(
-        config.LEAFLET_CSS.read_bytes()
+        css_text.encode("utf-8")
     ).decode("ascii")
     return js, css
+
+
+def _css_with_inline_images(css_text: str) -> str:
+    """把 CSS 里引用 images/ 的相对路径换成 data: URL（离线、无 404）。"""
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        image = config.LEAFLET_IMAGES_DIR / name
+        if not image.is_file():
+            return match.group(0)
+        mime = mimetypes.guess_type(name)[0] or "image/png"
+        data = base64.b64encode(image.read_bytes()).decode("ascii")
+        return f"url(data:{mime};base64,{data})"
+
+    return re.sub(r"url\(images/([^)']+)\)", replace, css_text)
+
+
+@functools.lru_cache(maxsize=1)
+def _icon_shim_url() -> str | None:
+    """生成一小段脚本，把 Leaflet 默认图标指向内联图片。
+
+    Leaflet 会从页面里的 ``leaflet.css`` 链接反推图片目录；内嵌模式下 CSS 是
+    data: URL，没有目录可推，于是浏览器会去组件目录下找 marker-icon.png 而 404。
+    我们本来就用 DivIcon 画点，这里只是把默认图标也补上，顺手消掉控制台噪音。
+    """
+    icon = config.LEAFLET_IMAGES_DIR / "marker-icon.png"
+    icon2x = config.LEAFLET_IMAGES_DIR / "marker-icon-2x.png"
+    shadow = config.LEAFLET_IMAGES_DIR / "marker-shadow.png"
+    if not (icon.is_file() and shadow.is_file()):
+        return None
+
+    def uri(path: Path) -> str:
+        return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+    code = (
+        "(function(){if(!window.L||!L.Icon||!L.Icon.Default)return;"
+        "L.Icon.Default.mergeOptions({iconUrl:%s,iconRetinaUrl:%s,shadowUrl:%s});"
+        "})();"
+        % (
+            json.dumps(uri(icon)),
+            json.dumps(uri(icon2x)) if icon2x.is_file() else "null",
+            json.dumps(uri(shadow)),
+        )
+    )
+    return "data:text/javascript;base64," + base64.b64encode(code.encode("utf-8")).decode("ascii")
 
 
 def use_local_assets(m: folium.Map, mode: str = "relative") -> bool:
@@ -134,7 +213,14 @@ def use_local_assets(m: folium.Map, mode: str = "relative") -> bool:
 
     # 只保留 leaflet：jquery / bootstrap / glyphicons / fontawesome / awesome-markers
     # 在本项目里都用不到（标记点已改成内联 SVG），去掉就少 8 个外部请求
-    m.default_js = [("leaflet", js_url)]
+    js_links: list[tuple[str, str]] = [("leaflet", js_url)]
+    if mode == "inline":
+        # 内嵌模式下补一段默认图标的 data: URL，避免 Leaflet 推不出图片目录而 404
+        shim = _icon_shim_url()
+        if shim:
+            js_links.append(("leaflet_icons", shim))
+
+    m.default_js = js_links
     m.default_css = [("leaflet_css", css_url)]
     return True
 

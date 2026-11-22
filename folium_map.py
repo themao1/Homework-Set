@@ -78,15 +78,16 @@ def build_map(rows: list[dict[str, Any]], layer: config.Layer) -> folium.Map:
             continue
         # 外部数据（高德返回的名称/地址）拼 HTML 前必须转义：
         # POI 名称不受我们控制，含 <script> 时就会被浏览器执行
-        popup_html = (
-            f"<b>{html.escape(row['name'] or '')}</b><br>"
-            f"{html.escape(row['address'] or '')}<br>"
-            f"{html.escape(row['tel'] or '')}"
-        )
         folium.Marker(
             location=[row["lat"], row["lng"]],
-            popup=folium.Popup(popup_html, max_width=260),
-            tooltip=f"#{row['id']} {row['name']}",
+            # 用 tooltip 而不是 Popup：Popup 内部依赖 jQuery，离线时会抛错中断脚本
+            tooltip=map_assets.tooltip_html(
+                row["id"],
+                html.escape(row["name"] or ""),
+                html.escape(row["address"] or ""),
+                html.escape(row["tel"] or ""),
+                html.escape(row["type"] or ""),
+            ),
             # 内联 SVG 图钉：不依赖 awesome-markers / 图标字体，离线也画得出来
             icon=map_assets.pin_icon(layer.key),
         ).add_to(m)
