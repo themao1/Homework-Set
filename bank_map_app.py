@@ -81,10 +81,16 @@ def cached_types(table: str) -> list[str]:
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def cached_cities(table: str) -> list[str]:
-    """城市下拉框的候选值。"""
+def cached_cities(table: str) -> tuple[list[str], bool]:
+    """城市下拉框的候选值 + 是否存在「未标注城市」的老数据。
+
+    返回 (城市列表, 是否有未标注)，界面据此决定要不要出现「未标注」这一项：
+    数据都补齐城市后，这一项就不该再占位置。
+    """
     with db() as conn:
-        return SQLOperation.list_pois_cities(conn, table)
+        cities = SQLOperation.list_pois_cities(conn, table)
+        unknown = SQLOperation.count_pois(conn, table, city=config.FILTER_UNKNOWN)
+    return cities, unknown > 0
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +229,15 @@ def render_sidebar() -> dict[str, Any]:
             help="类型取自高德 POI 分类，展示时做了截短，实际过滤用完整分类值",
         )
 
-        cities = cached_cities(layer.table)
-        city_options = [config.FILTER_ALL, *cities, config.FILTER_UNKNOWN]
+        cities, has_unknown = cached_cities(layer.table)
+        city_options = [config.FILTER_ALL, *cities]
+        if has_unknown:
+            city_options.append(config.FILTER_UNKNOWN)
+        else:
+            # 「未标注」这一项只有在确实存在老数据时才出现；
+            # 但如果用户当前正停在这一项上，保留它以免选项消失导致报错
+            if st.session_state.get(f"city_{layer.key}") == config.FILTER_UNKNOWN:
+                city_options.append(config.FILTER_UNKNOWN)
         city = st.selectbox(
             "城市",
             options=city_options,
