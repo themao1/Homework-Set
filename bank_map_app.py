@@ -32,6 +32,7 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 import config
+import map_assets
 import SQLOperation
 
 # ---------------------------------------------------------------------------
@@ -160,8 +161,11 @@ def build_map(
         tiles=config.AMAP_TILE,
         attr="高德地图",  # 底图版权声明，法律上必须保留
     )
-
-    default_color = "blue" if layer.key == "bank" else "green"
+    # 组件 iframe 里拿不到项目目录，所以用 inline 模式把 leaflet 直接内嵌进页面：
+    # 不请求任何 CDN，内网/离线环境下地图照样能画出来
+    # （个别浏览器策略拦截 data: 时，可用环境变量 MAP_ASSET_MODE=cdn 回退到默认 CDN）
+    if config.MAP_ASSET_MODE != "cdn":
+        map_assets.use_local_assets(m, mode="inline")
 
     for row in rows:
         # 数据是不可信的：缺坐标的行直接跳过，不要让 folium 抛错
@@ -179,10 +183,8 @@ def build_map(
             location=[row["lat"], row["lng"]],
             tooltip=f"#{row['id']} {fmt_value(row.get('name'), '')}",
             popup=folium.Popup(popup_html, max_width=260),
-            icon=folium.Icon(
-                color="red" if row["id"] == selected_id else default_color,
-                icon="info-sign",
-            ),
+            # 内联 SVG 图钉：不依赖 awesome-markers / glyphicons 等外部图标库
+            icon=map_assets.pin_icon(layer.key, selected=row["id"] == selected_id),
         ).add_to(m)
     return m
 

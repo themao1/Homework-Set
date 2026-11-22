@@ -44,6 +44,7 @@ python main.py app                # 浏览器访问 http://localhost:8501
 | `DataGet.py` | 高德 POI 抓取 → 清洗 → 入库 | 不写 SQL，全部委托 `SQLOperation` |
 | `bank_map_app.py` | Streamlit 前端：地图查询 / 列表查询 / 信息反馈 | 不写 SQL，全部调用 `SQLOperation` |
 | `folium_map.py` | 导出静态地图 HTML（可离线打开、可放进报告） | 不写 SQL |
+| `map_assets.py` | 地图前端资源本地化：leaflet 走本地 `libs/`，标记点用内联 SVG 图钉 | 不依赖公网 CDN |
 | `banks.db` | SQLite 数据库（表结构 v3） | 由 `SQLOperation` 建表与迁移 |
 
 ---
@@ -81,7 +82,35 @@ python main.py review reject 3 --note 证据不足
 - 回写业务记录与改反馈状态在**同一个事务**里，不会出现「状态已通过但数据没改」；
 - 已审核过的反馈不能再审；`--apply` 在非交互环境必须加 `--yes` 明确确认。
 
-### 3.4 统一入口
+### 3.5 地图资源本地化（离线 / 内网可用）
+
+folium 默认从公网 CDN 加载 10 个资源。实测只要其中两个挂了，地图就不能正常显示：
+
+- `leaflet.js` 加载不到 → 地图整块白屏；
+- `leaflet.awesome-markers.js` 加载不到 → `L.AwesomeMarkers.icon(...)` 报错，
+  用 `folium.Icon` 画的标记点全部消失。
+
+项目里已经把 Leaflet 1.9.4 放在 `libs/`（`leaflet.js` / `leaflet.css` / `images/`），
+`map_assets.py` 负责按场景切换引用方式：
+
+| 场景 | 引用方式 | 效果 |
+|---|---|---|
+| 静态导出 HTML | `<script src="libs/leaflet.js">`、`<link href="libs/leaflet.css">` | 双击打开即用，无外网请求 |
+| 前端内嵌地图 | 把 leaflet 内容编码成 `data:` URL 注入组件 iframe | 组件里拿不到项目目录，这样也零请求 |
+
+同时去掉了 jquery / bootstrap / glyphicons / fontawesome / awesome-markers 这 8 个用不到的
+CDN 依赖，标记点改为**内联 SVG 图钉**（`folium.DivIcon`），不依赖任何图标字体。
+
+- 导出到其它目录时，`folium_map.export` 会自动把 `libs/` 复制到 HTML 旁边；
+- 本地资源缺失时自动回退到 folium 默认 CDN，并打印一次警告；
+- 应急开关：环境变量 `MAP_ASSET_MODE=cdn` 可强制走原来的 CDN 方式。
+
+自查：导出的 HTML 里搜不到 `http` 外链、搜不到 `AwesomeMarkers`。
+
+> 注意：底图瓦片仍然来自高德服务器。完全断网时能正常看到标记点、控件和交互，
+> 但底图会是灰底——瓦片要离线只能自己搭缓存或改用本地瓦片目录。
+
+### 3.6 统一入口
 
 ```bash
 python main.py app [--port 8501] [--no-browser]   # 启动前端
@@ -181,6 +210,7 @@ grep -rn "import sqlite3" *.py  # Git Bash / Linux
 | `status` 未设 `row_factory` | 统一 `sqlite3.Row`，按列名取值 |
 | `clean_row` 认为 `lng=0/lat=0` 合法 | 保留这个判断，另加经纬度**合法范围**校验 |
 | 抓取边抓边写可以省内存 | 当前仍是分批入内存后入库，注释标明了改造点 |
+| folium 样式/脚本从公网 CDN 获取，离线打不开地图 | 改用本地 `libs/` + 内联 SVG 图钉，去掉 8 个用不到的 CDN 请求（见 3.5） |
 
 ---
 
@@ -197,4 +227,5 @@ grep -rn "import sqlite3" *.py  # Git Bash / Linux
 - 单机 SQLite，未做多用户并发写入的优化（演示够用）；
 - 反馈审核是命令行工具，没有网页后台与账号体系；
 - 抓取受高德接口页码上限（100 页/关键词）限制，城市数据量大时要按区县拆分检索；
-- 地图不做点位聚合，数据量大时靠列表查询分页。
+- 地图不做点位聚合，数据量大时靠列表查询分页；
+- 底图瓦片依赖高德服务器，完全离线时只有标记点和控件，没有底图。

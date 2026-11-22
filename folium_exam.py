@@ -16,6 +16,7 @@ from contextlib import closing
 import folium
 
 import config
+import map_assets
 from SQLOperation import get_connection, list_pois
 
 
@@ -34,8 +35,9 @@ def main() -> int:
         tiles=config.AMAP_TILE,
         attr="高德地图",
     )
+    map_assets.use_local_assets(m, mode="relative")
 
-    # 暴力打点测试（不用自定义图标，就用默认的大头针）
+    # 暴力打点测试（不用自定义图标，就用内联图钉）
     for row in rows:
         lat, lng = row.get("lat"), row.get("lng")
         if lat is None or lng is None:
@@ -44,6 +46,7 @@ def main() -> int:
         folium.Marker(
             location=[float(lat), float(lng)],
             popup=row.get("name") or "",
+            icon=map_assets.pin_icon("bank"),
         ).add_to(m)
 
     m.save(str(config.BASE_DIR / "test_map.html"))

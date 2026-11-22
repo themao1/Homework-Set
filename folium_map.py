@@ -30,6 +30,7 @@ from typing import Any, Sequence
 import folium
 
 import config
+import map_assets
 from SQLOperation import get_connection, list_pois
 
 logger = logging.getLogger(__name__)
@@ -66,8 +67,9 @@ def build_map(rows: list[dict[str, Any]], layer: config.Layer) -> folium.Map:
         tiles=config.AMAP_TILE,
         attr="高德地图",  # 底图版权声明，法律上必须保留
     )
-
-    color = "blue" if layer.key == "bank" else "green"
+    # 关键：把 leaflet 的 js/css 指到本地 libs/，并去掉 jquery/bootstrap 等用不到的 CDN
+    # ——否则离线或 CDN 不通时，导出的 HTML 打开就是一片空白
+    map_assets.use_local_assets(m, mode="relative")
 
     for row in rows:
         # 数据是不可信的：库里的行可能缺坐标（NULL），直接打点会让 folium 抛错
@@ -85,7 +87,8 @@ def build_map(rows: list[dict[str, Any]], layer: config.Layer) -> folium.Map:
             location=[row["lat"], row["lng"]],
             popup=folium.Popup(popup_html, max_width=260),
             tooltip=f"#{row['id']} {row['name']}",
-            icon=folium.Icon(color=color, icon="info-sign"),
+            # 内联 SVG 图钉：不依赖 awesome-markers / 图标字体，离线也画得出来
+            icon=map_assets.pin_icon(layer.key),
         ).add_to(m)
     return m
 
@@ -113,6 +116,13 @@ def export(layer_key: str = "bank", output: str | Path | None = None) -> Path:
     if not rows:
         logger.warning("库中没有「%s」数据，请先运行 python main.py scrape", layer.label)
         return out_path
+
+    # 导出到别的目录时，把 leaflet 资源一起带过去，否则 HTML 里的 libs/... 会 404
+    if not map_assets.ensure_assets_for(out_path):
+        logger.warning(
+            "输出目录 %s 旁没有 libs/ 且无法复制本地 Leaflet，"
+            "该 HTML 打开后地图将无法显示", out_path.parent
+        )
 
     build_map(rows, layer).save(str(out_path))
     logger.info("已导出 %d 个「%s」点位到 %s", len(rows), layer.label, out_path)

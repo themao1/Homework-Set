@@ -109,6 +109,25 @@ AMAP_TILE = env_str(
     "?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}",
 )
 
+# ---------------------------------------------------------------------------
+# 地图前端资源（Leaflet）本地化
+# ---------------------------------------------------------------------------
+# folium 默认从公网 CDN 拉 leaflet/jquery/bootstrap/awesome-markers，
+# 内网、离线或 CDN 被墙时地图就是一片空白。这里指向项目内的本地副本。
+LEAFLET_DIR = Path(env_str("LEAFLET_DIR", str(BASE_DIR / "libs")))
+LEAFLET_JS = LEAFLET_DIR / "leaflet.js"
+LEAFLET_CSS = LEAFLET_DIR / "leaflet.css"
+LEAFLET_IMAGES_DIR = LEAFLET_DIR / "images"
+
+# 相对引用前缀：静态 HTML 与 libs/ 同级时用 "libs/leaflet.js" 即可
+LEAFLET_ASSET_URL = env_str("LEAFLET_ASSET_URL", LEAFLET_DIR.name or "libs").rstrip("/")
+
+# 前端内嵌地图的引用方式：
+#   inline（默认）= 把 leaflet 内容编码成 data: URL 塞进组件，零网络请求，离线可用；
+#   cdn           = 回退 folium 默认 CDN（个别浏览器策略拦截 data: 时用这个开关应急）。
+# 静态导出的 HTML 固定用相对路径（libs/leaflet.js），便于缓存与查看源码。
+MAP_ASSET_MODE = env_str("MAP_ASSET_MODE", "inline").lower()
+
 # 周边查询：默认半径、可调上下限（米）
 NEARBY_RADIUS_DEFAULT = env_int("NEARBY_RADIUS_DEFAULT", 1000)
 NEARBY_RADIUS_MIN = env_int("NEARBY_RADIUS_MIN", 200)
