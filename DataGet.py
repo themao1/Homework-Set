@@ -389,10 +389,10 @@ def run(
     # 汇总日志：一眼看出这次到底入库了多少
     for item in results:
         if "error" in item:
-            logger.error("❌ %s：%s", item["label"], item["error"])
+            logger.error("[失败] %s：%s", item["label"], item["error"])
         else:
             logger.info(
-                "✅ %s：抓取 %d 条，可用 %d 条，新增 %d 条，更新 %d 条，跳过 %d 条",
+                "%s：抓取 %d 条，可用 %d 条，新增 %d 条，更新 %d 条，跳过 %d 条",
                 item["label"], item["fetched"], item["usable"],
                 item["inserted"], item["updated"], item["skipped"],
             )
@@ -401,6 +401,7 @@ def run(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """命令行入口：python DataGet.py [--target ...] [--city ...] [--pages N]"""
+    config.make_stdout_safe()
     parser = argparse.ArgumentParser(description="高德 POI 抓取（增量入库）")
     parser.add_argument(
         "--target",

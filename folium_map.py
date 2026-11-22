@@ -132,6 +132,7 @@ def export(layer_key: str = "bank", output: str | Path | None = None) -> Path:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """命令行入口：python folium_map.py [--layer ...] [--out ...]"""
+    config.make_stdout_safe()
     parser = argparse.ArgumentParser(description="导出静态地图 HTML")
     parser.add_argument(
         "--layer", default="bank",

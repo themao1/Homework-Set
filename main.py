@@ -48,11 +48,11 @@ def cmd_app(args: argparse.Namespace) -> int:
     try:
         import streamlit  # noqa: F401  仅用于提前发现「没装依赖」
     except ImportError:
-        print("❌ 未安装 streamlit，请先执行：pip install -r requirements.txt")
+        print("未安装 streamlit，请先执行：pip install -r requirements.txt")
         return 1
 
     if not APP_PATH.exists():
-        print(f"❌ 找不到前端文件：{APP_PATH}")
+        print(f"找不到前端文件：{APP_PATH}")
         return 1
 
     command = [
@@ -72,7 +72,7 @@ def cmd_app(args: argparse.Namespace) -> int:
         # 不加 --no-browser 时交给 streamlit 自动打开浏览器；服务器/脚本环境用这个开关
         command.append("--server.headless=true")
 
-    print(f"🚀 启动前端：http://{args.address}:{args.port}（Ctrl+C 停止）")
+    print(f"启动前端：http://{args.address}:{args.port}（Ctrl+C 停止）")
     try:
         return subprocess.call(command, cwd=str(config.BASE_DIR))
     except KeyboardInterrupt:  # 用户 Ctrl+C 属于正常退出，不打红叉
@@ -99,16 +99,16 @@ def cmd_scrape(args: argparse.Namespace) -> int:
             page_size=args.page_size,
         )
     except (RuntimeError, KeyError) as exc:
-        print(f"❌ 抓取中止：{exc}")
+        print(f"抓取中止：{exc}")
         return 1
 
     print("\n抓取结果：")
     for item in results:
         if "error" in item:
-            print(f"  ❌ {item['label']}：{item['error']}")
+            print(f"  [失败] {item['label']}：{item['error']}")
         else:
             print(
-                f"  ✅ {item['label']}：抓取 {item['fetched']} 条，"
+                f"  {item['label']}：抓取 {item['fetched']} 条，"
                 f"新增 {item['inserted']} 条，更新 {item['updated']} 条，"
                 f"跳过 {item['skipped']} 条"
             )
@@ -142,12 +142,12 @@ def cmd_export_map(args: argparse.Namespace) -> int:
             )
         try:
             path = folium_map.export(key, out)
-            print(f"✅ 已导出 → {path}")
+            print(f"已导出 → {path}")
         except (FileNotFoundError, KeyError) as exc:
-            print(f"❌ 导出「{key}」失败：{exc}")
+            print(f"导出「{key}」失败：{exc}")
             failures += 1
         except OSError as exc:
-            print(f"❌ 写入文件失败（{exc.filename or out}）：{exc.strerror or exc}")
+            print(f"写入文件失败（{exc.filename or out}）：{exc.strerror or exc}")
             failures += 1
     return 1 if failures else 0
 
@@ -166,7 +166,7 @@ def cmd_db(args: argparse.Namespace) -> int:
         return 0
 
     if not config.DB_PATH.exists():
-        print(f"❌ 未找到数据库：{config.DB_PATH}")
+        print(f"未找到数据库：{config.DB_PATH}")
         print("   先运行：python main.py scrape --target all")
         return 1
     with closing(SQLOperation.get_connection()) as conn:
@@ -230,7 +230,7 @@ def cmd_review_show(args: argparse.Namespace) -> int:
     with closing(SQLOperation.get_connection()) as conn:
         item = SQLOperation.get_feedback(conn, args.id)
     if item is None:
-        print(f"❌ 反馈 #{args.id} 不存在")
+        print(f"反馈 #{args.id} 不存在")
         return 1
 
     layer = config.get_layer(item["target_type"])
@@ -253,7 +253,7 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
     if assume_yes:
         return True
     if not sys.stdin.isatty():
-        print("❌ 当前不是交互终端，回写前请加 --yes 明确确认")
+        print("当前不是交互终端，回写前请加 --yes 明确确认")
         return False
     return input(f"{prompt} [y/N] ").strip().lower() in {"y", "yes"}
 
@@ -263,18 +263,18 @@ def cmd_review_approve(args: argparse.Namespace) -> int:
     with closing(SQLOperation.get_connection()) as conn:
         item = SQLOperation.get_feedback(conn, args.id)
         if item is None:
-            print(f"❌ 反馈 #{args.id} 不存在")
+            print(f"反馈 #{args.id} 不存在")
             return 1
         if item["status"] != config.FEEDBACK_STATUS_DEFAULT:
             print(
-                f"❌ 反馈 #{args.id} 已经是"
+                f"反馈 #{args.id} 已经是"
                 f"「{config.FEEDBACK_STATUS.get(item['status'], item['status'])}」，不能重复审核"
             )
             return 1
 
         if args.apply:
             if not (item["suggested_value"] or "").strip():
-                print("❌ 该反馈没有填写建议值，无法回写；请去掉 --apply，或先人工修正数据")
+                print("该反馈没有填写建议值，无法回写；请去掉 --apply，或先人工修正数据")
                 return 1
             # 先预检格式再让用户确认，避免「点了确认才发现坐标写错」
             try:
@@ -282,7 +282,7 @@ def cmd_review_approve(args: argparse.Namespace) -> int:
                     item["field_name"], item["suggested_value"]
                 )
             except ValueError as exc:
-                print(f"❌ 建议值无法回写：{exc}")
+                print(f"建议值无法回写：{exc}")
                 return 1
             field = config.FEEDBACK_FIELDS.get(item["field_name"], item["field_name"])
             print(
@@ -303,10 +303,10 @@ def cmd_review_approve(args: argparse.Namespace) -> int:
                 apply_value=args.apply,
             )
         except (LookupError, ValueError) as exc:
-            print(f"❌ 审核失败：{exc}")
+            print(f"审核失败：{exc}")
             return 1
 
-    print(f"✅ 反馈 #{args.id} 已通过（审核人：{args.reviewer or '未署名'}）")
+    print(f"反馈 #{args.id} 已通过（审核人：{args.reviewer or '未署名'}）")
     if result["applied"]:
         changes = "，".join(f"{k}={v}" for k, v in result["applied"].items())
         print(f"   已回写到 {result['target_table']}：{changes}")
@@ -328,12 +328,12 @@ def cmd_review_reject(args: argparse.Namespace) -> int:
                 apply_value=False,
             )
         except LookupError:
-            print(f"❌ 反馈 #{args.id} 不存在")
+            print(f"反馈 #{args.id} 不存在")
             return 1
         except ValueError as exc:
-            print(f"❌ 驳回失败：{exc}")
+            print(f"驳回失败：{exc}")
             return 1
-    print(f"✅ 反馈 #{args.id} 已驳回（审核人：{args.reviewer or '未署名'}）")
+    print(f"反馈 #{args.id} 已驳回（审核人：{args.reviewer or '未署名'}）")
     return 0
 
 
@@ -431,6 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """入口分发：把子命令交给对应函数，返回退出码。"""
+    config.make_stdout_safe()  # Windows 控制台是 GBK 时，别让中文输出把脚本打崩
     parser = build_parser()
     args = parser.parse_args(argv)
 

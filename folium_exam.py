@@ -22,6 +22,7 @@ from SQLOperation import get_connection, list_pois
 
 def main() -> int:
     """读前 10 条银行数据，打点并保存到 test_map.html。"""
+    config.make_stdout_safe()
     with closing(get_connection()) as conn:
         rows = list_pois(conn, "banks", limit=10)
 
@@ -52,7 +53,7 @@ def main() -> int:
         ).add_to(m)
 
     m.save(str(config.BASE_DIR / "test_map.html"))
-    print("✅ 测试地图已保存：test_map.html")
+    print("测试地图已保存：test_map.html")
     return 0
 
 

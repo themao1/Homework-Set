@@ -1078,24 +1078,25 @@ def format_status(conn: sqlite3.Connection) -> str:
         if _table_exists(conn, layer.table):
             stats = table_stats(conn, layer.table)
             lines.append(
-                f"  {layer.icon} {layer.label}（{layer.table}）：{stats['total']} 条，"
+                f"  {layer.label}（{layer.table}）：{stats['total']} 条，"
                 f"城市 {stats['cities']} 个，类型 {stats['types']} 种，"
                 f"最近更新 {stats['last_updated'] or '—'}"
             )
         else:
-            lines.append(f"  {layer.icon} {layer.label}（{layer.table}）：表不存在")
+            lines.append(f"  {layer.label}（{layer.table}）：表不存在")
 
     if _table_exists(conn, "feed_back"):
         stats = feedback_stats(conn)
         detail = "，".join(
             f"{config.FEEDBACK_STATUS[key]} {count}" for key, count in stats.items()
         )
-        lines.append(f"  ✍️ 用户反馈（feed_back）：共 {sum(stats.values())} 条（{detail}）")
+        lines.append(f"  用户反馈（feed_back）：共 {sum(stats.values())} 条（{detail}）")
     return "\n".join(lines)
 
 
 def _cli() -> None:
     """命令行自检工具：查看状态或手动触发迁移。"""
+    config.make_stdout_safe()
     parser = argparse.ArgumentParser(description="数据库工具（银行/小区/反馈）")
     parser.add_argument(
         "command",
@@ -1113,7 +1114,7 @@ def _cli() -> None:
         return
 
     if not DB_PATH.exists():
-        print(f"❌ 未找到 {DB_PATH}")
+        print(f"未找到 {DB_PATH}")
         raise SystemExit(1)
     with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row  # 版本检查也要能按列名取值

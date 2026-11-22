@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,6 +53,23 @@ def env_bool(name: str, default: bool) -> bool:
     if not value:
         return default
     return value in {"1", "true", "yes", "y", "on"}
+
+
+def make_stdout_safe() -> None:
+    """让命令行输出在任意终端编码下都不崩。
+
+    Windows 控制台常见 GBK（cp936）或 CP437，打印中文/符号时 Python 会抛
+    ``UnicodeEncodeError`` 直接中断脚本——别人 clone 下来跑第一条命令就崩，很难受。
+    这里把错误处理降级为 replace：实在编码不了的字符显示成 ``?``，但程序继续跑。
+
+    各命令行入口（main.py / DataGet.py / folium_map.py / SQLOperation.py）启动时调用。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            # 非标准流（被重定向成 StringIO 等）没有 reconfigure，忽略即可
+            pass
 
 
 # ---------------------------------------------------------------------------
