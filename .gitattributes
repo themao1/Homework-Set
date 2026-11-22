@@ -1,17 +1,20 @@
-# 统一换行符，避免 Windows/macOS 之间来回改行（此前的 CRLF 警告就是它引起的）
-* text=auto
+# 统一换行符：始终使用 LF，避免 Windows/macOS 之间来回改行
+# （之前 git 反复提示「LF will be replaced by CRLF」就是 core.autocrlf 在起作用）
+* text=auto eol=lf
+
 *.py   text eol=lf
 *.md   text eol=lf
 *.txt  text eol=lf
 *.html text eol=lf
 *.css  text eol=lf
 *.js   text eol=lf
+*.toml text eol=lf
 
 # 第三方库不计入语言统计（libs/ 是 Leaflet 的本地副本）
 libs/*.js  linguist-vendored
 libs/*.css linguist-vendored
 
 # 数据文件按二进制处理，避免被换行转换破坏
-*.db binary
+*.db  binary
 *.png binary
 *.jpg binary
